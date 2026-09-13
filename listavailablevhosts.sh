@@ -1,4 +1,8 @@
 #!/bin/bash
- 
-find /etc/httpd/conf.d/vhosts/*.conf 2>/dev/null | awk 'BEGIN {FS="/"}{print $6}' | awk 'BEGIN {FS="."}{print $2"."$3"."$4}'
-
+source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
+shopt -s nullglob
+for file in "$vhostsdir"/ssl.*.conf; do
+    name=${file##*/}
+    name=${name#ssl.}
+    printf '%s\n' "${name%.*}"
+done

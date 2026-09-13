@@ -1,21 +1,17 @@
 #!/bin/bash
-
+source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
+require_root
+[[ $# == 1 ]] || fail "Usage: $0 DOMAIN"
 domain=$1
-vhostsdir='/etc/httpd/conf.d/vhosts'
-vhostconfFP=$vhostsdir/ssl.$domain.sus
-
-#check if the user didnot write the domain name 
-while [ "$domain" == "" ]
-do
-        echo -e "Please provide domain. e.g.dev,staging"
-        read domain
-done
-
-
-# check if domain already exists
-if ! [ -e $vhostconfFP ]; then
-           echo -e $"This domain does not exist.\nPlease try another one"
-           exit; 
-
-mv -- "$vhostconfFP" "${vhostconfFP%.sus}.conf"
-
+validate_domain
+source_path="$vhostsdir/ssl.$domain.sus"
+target_path="$vhostsdir/ssl.$domain.conf"
+[[ -f $source_path && ! -L $source_path ]] || fail 'Source virtual host not found or is a symlink.'
+[[ ! -e $target_path && ! -L $target_path ]] || fail 'Target virtual host already exists.'
+mv -- "$source_path" "$target_path"
+if ! reload_config; then
+    mv -- "$target_path" "$source_path"
+    reload_config || true
+    fail 'Apache rejected the change; original configuration restored.'
+fi
+printf 'Updated %s successfully.\n' "$domain"
