@@ -1,142 +1,63 @@
 #!/bin/bash
-
-# parameters
-
+source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
+require_root
+[[ $# == 2 ]] || fail "Usage: $0 DOMAIN IPV4_ADDRESS"
 domain=$1
-LISTENIP=$2
-owner=$(who am i | awk '{print $1}')
-vhostsdir='/etc/httpd/conf.d/vhosts'
-apachedir='/var/www/'
-vhostsconfFP=$vhostsdir/ssl.$domain.conf
-hostdir=$apachedir$domain
-
-
-
-
-
-# check if the user is root or not.
-if [ "$(whoami)" != 'root' ]; then
-        echo $"You have no permission to run $0 as non-root user. Use sudo"
-                exit 1;
-fi
-
-#check if the user didnot write the domain name 
-while [ "$domain" == "" ]
-do
-        echo -e "Please provide domain. e.g.dev,staging"
-        read domain
+listen_ip=$2
+validate_domain
+[[ $listen_ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'Provide a local IPv4 address.'
+found=false
+for ip in $(hostname -I); do
+    [[ $ip != "$listen_ip" ]] || found=true
 done
-
-# check if domain already exists
-if [ -e $vhostsconfFP ]; then
-        echo -e $"This domain already exists.\nPlease Try Another one"
-        exit;
-fi
-
-#
-while [ "$domain" == "" ]
-do
-        echo -e "Please provide domain. e.g.dev,staging"
-        read domain
+$found || fail 'That exact IP address is not assigned to this host.'
+conf="$vhostsdir/ssl.$domain.conf"
+hostdir="$apachedir/$domain"
+key="$certdir/$domain.key"
+cert="$certdir/$domain.crt"
+for path in "$conf" "$vhostsdir/ssl.$domain.sus" "$key" "$cert"; do
+    [[ ! -e $path && ! -L $path ]] || fail "Already exists: $path"
 done
-
-# check if the listening ip is available on this host
-hostname -I > availableip.txt 
-if ! grep -q $LISTENIP "availableip.txt" 
-then
-    echo "this ip isn't available, choose another ip"
-    exit 1;
+[[ ! -e $hostdir && ! -L $hostdir ]] || fail 'Document root already exists; refusing to overwrite it.'
+mkdir -p -- "$vhostsdir" "$certdir"
+created_dir=false
+created_assets=false
+rollback() {
+    local code=$?
+    if (( code != 0 )); then
+        if $created_assets; then rm -f -- "$conf" "$key" "$cert"; fi
+        if $created_dir; then rm -f -- "$hostdir/index.html"; rmdir -- "$hostdir" || true; fi
+        printf 'Creation failed; new lab files rolled back.\n' >&2
+    fi
+}
+trap rollback EXIT
+mkdir -- "$hostdir"
+created_dir=true
+chmod 755 -- "$hostdir"
+printf '<!doctype html><title>%s</title><h1>Welcome to %s</h1>\n' "$domain" "$domain" > "$hostdir/index.html"
+created_assets=true
+(umask 077; openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout "$key" -out "$cert" -subj "/CN=$domain" -addext "subjectAltName=DNS:$domain")
+chmod 644 -- "$cert"
+cat > "$conf" <<EOF
+<VirtualHost $listen_ip:443>
+    SSLEngine on
+    SSLCertificateFile "$cert"
+    SSLCertificateKeyFile "$key"
+    ServerName $domain
+    DocumentRoot "$hostdir"
+    ErrorLog /var/log/httpd/$domain-error.log
+    CustomLog /var/log/httpd/$domain-access.log combined
+</VirtualHost>
+<Directory "$hostdir">
+    Options -Indexes +FollowSymLinks
+    AllowOverride None
+    Require all granted
+</Directory>
+EOF
+if ! reload_config; then
+    rm -f -- "$conf"
+    reload_config || true
+    fail 'Apache rejected the new configuration.'
 fi
-
-
-# check if directory exists or not
-if ! [ -d $hostdir ]; then
-        # create the directory
-        mkdir $hostdir
-        # give permission to host dir
-        chmod 755 $hostdir
-        # write test file in the new domain dir
-        if ! echo $"<html><h1> welcome to $domain</h1 ></html>" > $hostdir/index.html
-             then
-                   echo $"ERROR: Not able to write in file $hostdir/index.html. Please check permissions"
-                   exit 1;
-        fi
-fi
-
-SUBJ="
-C=US
-O=Blah
-localityName=Alexandria
-commonName=$1
-organizationalUnitName=$1"
-#openssl  req -x509 -nodes -days 365 -newkey rsa:2048 -out /etc/nginx/keys/$2.pub -keyout /etc/nginx/keys/$2.perm -subj $(echo -n "$SUBJ" | tr "\n" "/" ) > /dev/null 2>$1
-
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/httpd/conf.d/certificate/$domain.key -out /etc/httpd/conf.d/certificate/$domain.crt -subj $(echo -n "$SUBJ" | tr "\n" "/" ) > /dev/null 2>$1
-
-if ! echo -e /etc/httpd/conf.d/certificate/$domain.key; then
-
-echo "Certificate key wasn't created !"
-
-else
-
-echo "Certificate key created !"
-
-fi
-
-if ! echo -e /etc/httpd/conf.d/certificate/$domain.crt; then
-
-echo "Certificate wasn't created !"
-
-else
-
-echo "Certificate created !"
-
-fi
-
-# create virtual host conf file
-if ! echo "
-    <VirtualHost $LISTENIP:443>
-            SSLEngine on
-            SSLCertificateFile /etc/httpd/conf.d/certificate/$domain.crt
-            SSLCertificateKeyFile /etc/httpd/conf.d/certificate/$domain.key
-            ServerName $domain
-            DocumentRoot $hostdir
-            ErrorLog /var/log/httpd/$domain-error.log
-            LogLevel error
-            CustomLog /var/log/httpd/$domain-access.log combined
-     </VirtualHost>
-     <Directory $hostdir>
-            Options Indexes FollowSymLinks MultiViews
-            AllowOverride all
-            Require all granted
-     </Directory>" > /etc/httpd/conf.d/vhosts/ssl.$domain.conf
-then
-     echo -e $"There is an ERROR creating $domain conf file"
-     exit 1;
-else
-     echo -e $"\n virtual host config file successfully created \n"
-fi
-
-# Add domain in /etc/hosts
-if ! echo "127.0.0.1    $domain" >> /etc/hosts
-then
-     echo $"ERROR: Not able to write in /etc/hosts"
-     exit 1;
-else
-      echo -e $"Host added to /etc/hosts file \n"
-fi
-
-if [ "$owner" == "" ]; then
-      chown -R $(whoami):$(whoami) $hostdir
-else
-      chown -R $owner:$owner $hostdir
-fi
-          
-# restart Apache
-systemctl restart httpd 1> /dev/null 2>&1
-
-
-# the final message
-echo -e $"Complete! \nNew Virtual Host are ready now \nYour new host is: https://$domain \nlocated at $hostdir"
-exit 0;
-
+trap - EXIT
+printf 'Created https://%s. Configure DNS or your client hosts file to resolve it to %s.\n' "$domain" "$listen_ip"
