@@ -1,5 +1,5 @@
 #!/bin/bash
-source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh" || exit 1
 shopt -s nullglob
 for file in "$vhostsdir"/ssl.*.conf; do
     name=${file##*/}
