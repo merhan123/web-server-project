@@ -1,5 +1,5 @@
 #!/bin/bash
-source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh" || exit 1
 require_root
 [[ $# == 2 ]] || fail "Usage: $0 DOMAIN IPV4_ADDRESS"
 domain=$1

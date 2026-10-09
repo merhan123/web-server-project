@@ -1,5 +1,9 @@
 # Apache virtual-host lab tools
 
+Keep `common.sh` beside the entry-point scripts. They stop immediately if that
+shared validation file cannot be loaded. Run startup regression tests with
+`python3 -m unittest discover -s tests -v` (Python 3.10+ and Bash required).
+
 Bash scripts for creating, listing, suspending, resuming and deleting HTTPS virtual hosts on a RHEL-style Apache installation (`httpd`).
 
 ## Requirements
